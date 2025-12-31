@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Active Users - Multiplayer</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background-color: #222;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 {
+    margin-bottom: 10px;
+    font-size: 24px;
+  }
+  #stats {
+    margin-bottom: 20px;
+    font-size: 14px;
+    color: #aaa;
+  }
+  #userContainer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    max-width: 600px;
+  }
+  .userBlock {
+    width: 50px;
+    height: 50px;
+    background-color: #4caf50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    color: #fff;
+    font-size: 12px;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+  .userBlock.me {
+    background-color: #2196f3;
+    box-shadow: 0 0 10px #2196f3;
+  }
+  .userBlock.inactive {
+    background-color: #666;
+    opacity: 0.5;
+  }
+  #status {
+    margin-top: 20px;
+    font-size: 12px;
+    color: #888;
+  }
+  #chatContainer {
+    margin-top: 30px;
+    width: 100%;
+    max-width: 600px;
+    background-color: #333;
+    border-radius: 10px;
+    padding: 20px;
+  }
+  #chatMessages {
+    height: 300px;
+    overflow-y: auto;
+    background-color: #1a1a1a;
+    border-radius: 5px;
+    padding: 15px;
+    margin-bottom: 15px;
+  }
+  .message {
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    border-radius: 5px;
+    background-color: #2a2a2a;
+  }
+  .message.me {
+    background-color: #1565c0;
+    margin-left: 20px;
+  }
+  .message .username {
+    font-weight: bold;
+    font-size: 11px;
+    color: #4caf50;
+    margin-bottom: 3px;
+  }
+  .message.me .username {
+    color: #64b5f6;
+  }
+  .message .text {
+    font-size: 14px;
+    word-wrap: break-word;
+  }
+  .message .timestamp {
+    font-size: 10px;
+    color: #888;
+    margin-top: 3px;
+  }
+  #chatInput {
+    display: flex;
+    gap: 10px;
+  }
+  #messageInput {
+    flex: 1;
+    padding: 12px;
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 5px;
+    color: #fff;
+    font-size: 14px;
+  }
+  #messageInput:focus {
+    outline: none;
+    border-color: #2196f3;
+  }
+  #sendButton {
+    padding: 12px 24px;
+    background-color: #4caf50;
+    border: none;
+    border-radius: 5px;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  #sendButton:hover {
+    background-color: #45a049;
+  }
+  #sendButton:active {
+    background-color: #3d8b40;
+  }
+</style>
+</head>
+<body>
+<h1>🌐 Active Users (Multiplayer)</h1>
+<div id="stats">Loading...</div>
+<div id="userContainer"></div>
+<div id="status">Connecting...</div>
+
+<div id="chatContainer">
+  <div id="chatMessages"></div>
+  <div id="chatInput">
+    <input type="text" id="messageInput" placeholder="Type a message..." maxlength="200">
+    <button id="sendButton">Send</button>
+  </div>
+</div>
+<script>
+  const container = document.getElementById("userContainer");
+  const statsDiv = document.getElementById("stats");
+  const statusDiv = document.getElementById("status");
+  const chatMessages = document.getElementById("chatMessages");
+  const messageInput = document.getElementById("messageInput");
+  const sendButton = document.getElementById("sendButton");
+  
+  // Generate unique user ID and username
+  let myUserId = localStorage.getItem('myUserId');
+  let myUsername = localStorage.getItem('myUsername');
+  
+  if (!myUserId) {
+    myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('myUserId', myUserId);
+  }
+  
+  if (!myUsername) {
+    myUsername = 'User' + Math.floor(Math.random() * 9999);
+    localStorage.setItem('myUsername', myUsername);
+  }
+  
+  let lastMessageId = 0;
+  
+  // Heartbeat to keep user active
+  async function sendHeartbeat() {
+    try {
+      const timestamp = Date.now();
+      await window.storage.set(
+        `user:${myUserId}`,
+        JSON.stringify({ id: myUserId, username: myUsername, lastSeen: timestamp }),
+        true // shared storage
+      );
+      statusDiv.textContent = '✓ Connected';
+    } catch (error) {
+      console.error('Heartbeat error:', error);
+      statusDiv.textContent = '✗ Connection error';
+    }
+  }
+  
+  // Send a chat message
+  async function sendMessage() {
+    const text = messageInput.value.trim();
+    if (!text) return;
+    
+    try {
+      const messageId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      const message = {
+        id: messageId,
+        userId: myUserId,
+        username: myUsername,
+        text: text,
+        timestamp: Date.now()
+      };
+      
+      await window.storage.set(`msg:${messageId}`, JSON.stringify(message), true);
+      messageInput.value = '';
+      await loadMessages();
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
+  }
+  
+  // Load and display messages
+  async function loadMessages() {
+    try {
+      const result = await window.storage.list('msg:', true);
+      if (!result || !result.keys) return;
+      
+      const messages = [];
+      for (const key of result.keys) {
+        try {
+          const msgData = await window.storage.get(key, true);
+          if (msgData && msgData.value) {
+            messages.push(JSON.parse(msgData.value));
+          }
+        } catch (e) {
+          console.error('Error loading message:', e);
+        }
+      }
+      
+      // Sort by timestamp
+      messages.sort((a, b) => a.timestamp - b.timestamp);
+      
+      // Only show last 50 messages
+      const recentMessages = messages.slice(-50);
+      
+      // Clear and display messages
+      chatMessages.innerHTML = '';
+      recentMessages.forEach(msg => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message' + (msg.userId === myUserId ? ' me' : '');
+        
+        const usernameDiv = document.createElement('div');
+        usernameDiv.className = 'username';
+        usernameDiv.textContent = msg.username;
+        
+        const textDiv = document.createElement('div');
+        textDiv.className = 'text';
+        textDiv.textContent = msg.text;
+        
+        const timestampDiv = document.createElement('div');
+        timestampDiv.className = 'timestamp';
+        const date = new Date(msg.timestamp);
+        timestampDiv.textContent = date.toLocaleTimeString();
+        
+        messageDiv.appendChild(usernameDiv);
+        messageDiv.appendChild(textDiv);
+        messageDiv.appendChild(timestampDiv);
+        chatMessages.appendChild(messageDiv);
+      });
+      
+      // Scroll to bottom
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }
+  
+  // Get all active users
+  async function getActiveUsers() {
+    try {
+      const result = await window.storage.list('user:', true);
+      if (!result || !result.keys) return [];
+      
+      const now = Date.now();
+      const activeThreshold = 10000; // 10 seconds
+      const users = [];
+      
+      for (const key of result.keys) {
+        try {
+          const userData = await window.storage.get(key, true);
+          if (userData && userData.value) {
+            const user = JSON.parse(userData.value);
+            const isActive = (now - user.lastSeen) < activeThreshold;
+            users.push({
+              ...user,
+              isActive,
+              isMe: user.id === myUserId
+            });
+          }
+        } catch (e) {
+          console.error('Error reading user:', e);
+        }
+      }
+      
+      return users;
+    } catch (error) {
+      console.error('Error getting users:', error);
+      return [];
+    }
+  }
+  
+  // Display users
+  async function displayUsers() {
+    const users = await getActiveUsers();
+    container.innerHTML = "";
+    
+    const activeCount = users.filter(u => u.isActive).length;
+    const totalCount = users.length;
+    statsDiv.textContent = `${activeCount} active user${activeCount !== 1 ? 's' : ''} (${totalCount} total)`;
+    
+    users.forEach((user, index) => {
+      const block = document.createElement("div");
+      block.className = "userBlock";
+      if (user.isMe) {
+        block.classList.add("me");
+        block.title = "You";
+      }
+      if (!user.isActive) {
+        block.classList.add("inactive");
+        block.title = "Inactive";
+      }
+      
+      // Show user number
+      block.textContent = (index + 1).toString();
+      container.appendChild(block);
+    });
+  }
+  
+  // Clean up inactive users
+  async function cleanupInactiveUsers() {
+    try {
+      const now = Date.now();
+      const inactiveThreshold = 60000; // 1 minute
+      const result = await window.storage.list('user:', true);
+      
+      if (result && result.keys) {
+        for (const key of result.keys) {
+          try {
+            const userData = await window.storage.get(key, true);
+            if (userData && userData.value) {
+              const user = JSON.parse(userData.value);
+              if ((now - user.lastSeen) > inactiveThreshold) {
+                await window.storage.delete(key, true);
+              }
+            }
+          } catch (e) {
+            console.error('Cleanup error:', e);
+          }
+        }
+      }
+      
+      // Clean up old messages (keep only last 100)
+      const msgResult = await window.storage.list('msg:', true);
+      if (msgResult && msgResult.keys && msgResult.keys.length > 100) {
+        const messages = [];
+        for (const key of msgResult.keys) {
+          try {
+            const msgData = await window.storage.get(key, true);
+            if (msgData && msgData.value) {
+              const msg = JSON.parse(msgData.value);
+              messages.push({ key, timestamp: msg.timestamp });
+            }
+          } catch (e) {
+            console.error('Message cleanup error:', e);
+          }
+        }
+        
+        messages.sort((a, b) => a.timestamp - b.timestamp);
+        const toDelete = messages.slice(0, messages.length - 100);
+        
+        for (const msg of toDelete) {
+          try {
+            await window.storage.delete(msg.key, true);
+          } catch (e) {
+            console.error('Delete old message error:', e);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error during cleanup:', error);
+    }
+  }
+  
+  // Initialize
+  async function init() {
+    await sendHeartbeat();
+    await displayUsers();
+    await loadMessages();
+    
+    // Send heartbeat every 3 seconds
+    setInterval(sendHeartbeat, 3000);
+    
+    // Update display every 2 seconds
+    setInterval(displayUsers, 2000);
+    
+    // Load messages every 2 seconds
+    setInterval(loadMessages, 2000);
+    
+    // Cleanup inactive users every 30 seconds
+    setInterval(cleanupInactiveUsers, 30000);
+  }
+  
+  // Event listeners
+  sendButton.addEventListener('click', sendMessage);
+  messageInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      sendMessage();
+    }
+  });
+  
+  // Clean up on page unload
+  window.addEventListener('beforeunload', async () => {
+    try {
+      await window.storage.delete(`user:${myUserId}`, true);
+    } catch (e) {
+      console.error('Cleanup on exit error:', e);
+    }
+  });
+  
+  init();
+</script>
+</body>
+</html>
